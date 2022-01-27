@@ -1,0 +1,819 @@
+; - HUNT THE WUMPUS -
+;
+; Original game by Gregory Yob (c) 1973 
+; BrainUnfuck 1.0.1 port by Leonardo Ono (c) 2022
+;
+; BrainUnfuck Language was created by FuzzyCat444.
+; BrainUnfuck compiler: https://github.com/FuzzyCat444/BrainUnfuck-to-Brainfuck-Compiler
+; 
+; To compile this source to BrainFuck, use: BrainUnfuckCompiler htw.bu htw.bf
+;
+; References:
+; doc and source: https://www.atariarchives.org/bcc1/showpage.php?page=250
+; basic language source: https://github.com/kingsawyer/wumpus/blob/master/wumpus.basic
+; play online: https://jayisgames.com/games/hunt-the-wumpus/
+ 
+; space & new line characters
+DATA SPACE LN DEBUG[12]
+STORE " " SPACE
+STORE "\010" LN
+STORE "---DEBUG---\010" DEBUG
+
+; unused data
+DATA _
+
+; get a value from array
+; notes: - array must be located in the first 255 cells.
+;        - not sure why but this function works only if placed at beginning of this source
+PROC GetArray array index value
+	DATA GetArray_ndw
+	
+	ADDRESS array _ _ _ GetArray_ndw
+	ADD GetArray_ndw index GetArray_ndw
+	COPYMV _ _ _ GetArray_ndw value
+ENDPROC
+
+; set value to array
+; note: array must be located in the first 255 cells.
+PROC SetArray array index value
+	DATA SetArray_ndw
+	
+	ADDRESS array _ _ _ SetArray_ndw
+	ADD SetArray_ndw index SetArray_ndw
+	COPYVM value _ _ _ SetArray_ndw
+ENDPROC
+
+; game objects array
+; 0-YOU, 1-WUMPUS, 2&3-PITS, 4&5-BATS
+; For example: l[0] = 7 ; -> player is located in the cave number 7
+DATA l[6] m[6] 
+
+; arrows
+DATA a
+
+; shoot rooms
+DATA p[5]
+
+; cave links information
+; For example: cave  0 -> linked to caves 1, 4 & 7
+;              cave  1 -> linked to caves 0, 2 & 9
+;              ...
+;              cave 19 -> linked to caves 12, 15 & 18
+DATA s[60] 
+
+STORE "\001\004\007\000\002\009\001\003\011\002" s[0]
+STORE "\004\013\000\003\005\004\006\014\005\007" s[10]
+STORE "\016\000\006\008\007\009\017\001\008\010" s[20]
+STORE "\009\011\018\002\010\012\011\013\019\003" s[30]
+STORE "\012\014\005\013\015\014\016\019\006\015" s[40]
+STORE "\017\008\016\018\010\017\019\012\015\018" s[50]
+
+; caveIndex = 0~19
+; neighborIndex = 0~2
+; note: caveIndex must be a variable.
+PROC GetNeighborCave caveIndex neighborIndex value
+	DATA GetNeighborCave_ndw
+	DATA GetNeighborCave_sIndex
+	
+	COPYVV caveIndex GetNeighborCave_sIndex
+	MUL caveIndex 3 GetNeighborCave_sIndex
+	ADD GetNeighborCave_sIndex GetNeighborCave_ndw GetNeighborCave_sIndex
+	ADD GetNeighborCave_sIndex neighborIndex GetNeighborCave_sIndex
+	COPYMV _ _ _ GetNeighborCave_sIndex value
+ENDPROC
+ADDRESS s _ _ _ GetNeighborCave_ndw
+
+; print variable as unsigned byte string number
+; notes: - number argument must be a variable. literal numbers will not work.
+;        - PrintUByteNumber_nd[3] must be located in the first 255 cells otherwise this will not work.
+PROC PrintUByteNumber number
+	DATA PrintUByteNumber_nd[3]
+	DATA PrintUByteNumber_nq 
+	DATA PrintUByteNumber_nr
+	DATA PrintUByteNumber_ni
+	DATA PrintUByteNumber_ndw
+	
+	STORE "  0" PrintUByteNumber_nd
+	ADDRESS PrintUByteNumber_nd _ _ _ PrintUByteNumber_ndw
+	ADD PrintUByteNumber_ndw 2 PrintUByteNumber_ndw
+	COPYVV number PrintUByteNumber_nq
+	WHILE PrintUByteNumber_nq
+		DIV PrintUByteNumber_nq 10 PrintUByteNumber_nq PrintUByteNumber_nr
+		ADD PrintUByteNumber_nr 48 PrintUByteNumber_nr
+		COPYVM PrintUByteNumber_nr _ _ _ PrintUByteNumber_ndw
+		SUB PrintUByteNumber_ndw 1 PrintUByteNumber_ndw
+	ENDWHILE
+	OUT 3 PrintUByteNumber_nd
+ENDPROC
+
+PROC AskRandomSeed
+	DATA AskRandomSeed_msg[44]
+	DATA AskRandomSeed_seed[2]
+	DATA AskRandomSeed_eq
+	
+	OUT 44 AskRandomSeed_msg
+	IN 2 AskRandomSeed_seed
+	
+	COPYVV AskRandomSeed_seed[0] Random_r
+	COPYVV AskRandomSeed_seed[1] Random_m
+	
+	; Random_m can't be 0. In this case, set 47
+	EQ 0 Random_m AskRandomSeed_eq
+	WHILE AskRandomSeed_eq
+		STORE 47 Random_m
+		
+		STORE 0 AskRandomSeed_eq
+	ENDWHILE
+ENDPROC
+STORE "PLEASE ENTER 2 CHARACTERS FOR RANDOM SEED:\010\010" AskRandomSeed_msg
+
+; random number between 0~(max-1)
+PROC Random max result
+	DATA Random_r
+	DATA Random_m
+	
+	MUL Random_r 231 Random_r
+	ADD Random_r 129 Random_r
+	MUL Random_r 47 Random_r
+	ADD Random_r Random_m Random_r
+	COPYVV Random_r result
+	DIV result max _ result
+ENDPROC
+
+; random number between 0~19
+PROC Fna result
+	DO Random 20 result
+ENDPROC
+
+; random number between 0~2
+PROC Fnb result
+	DO Random 71 result
+	DIV result 3 _ result
+ENDPROC
+
+; random number between 0~3
+PROC Fnc result
+	DO Random 41 result
+	DIV result 4 _ result
+ENDPROC
+
+PROC PlaceAllGameObjects
+	DATA PlaceAllGameObjects_msgGeneratingLevel[22]
+	DATA PlaceAllGameObjects_msgTryAgain[1]
+	DATA PlaceAllGameObjects_tryPlaceObjecsAgain
+	DATA PlaceAllGameObjects_caveIndex
+	DATA PlaceAllGameObjects_i
+	DATA PlaceAllGameObjects_j 
+	DATA PlaceAllGameObjects_k 
+	DATA PlaceAllGameObjects_c1
+	DATA PlaceAllGameObjects_c2
+	DATA PlaceAllGameObjects_cmp1
+	DATA PlaceAllGameObjects_cmp2
+	
+	OUT 22 PlaceAllGameObjects_msgGeneratingLevel
+	
+	STORE 1 PlaceAllGameObjects_tryPlaceObjecsAgain
+	WHILE PlaceAllGameObjects_tryPlaceObjecsAgain
+		STORE 0 PlaceAllGameObjects_tryPlaceObjecsAgain
+		
+		; place all game objects in the cave map
+		STORE 6 PlaceAllGameObjects_i
+		WHILE PlaceAllGameObjects_i
+			SUB PlaceAllGameObjects_i 1 PlaceAllGameObjects_i
+			DO Fna PlaceAllGameObjects_caveIndex
+			DO SetArray l PlaceAllGameObjects_i PlaceAllGameObjects_caveIndex
+		ENDWHILE
+		
+		; check if there are two or more game objects in the same cave
+		; if this is the case, try placing all objects again
+		STORE 6 PlaceAllGameObjects_j
+		WHILE PlaceAllGameObjects_j
+			SUB PlaceAllGameObjects_j 1 PlaceAllGameObjects_j
+			STORE 6 PlaceAllGameObjects_k
+			WHILE PlaceAllGameObjects_k
+				SUB PlaceAllGameObjects_k 1 PlaceAllGameObjects_k
+				NEQ PlaceAllGameObjects_j PlaceAllGameObjects_k PlaceAllGameObjects_cmp1
+				WHILE PlaceAllGameObjects_cmp1
+					DO GetArray l PlaceAllGameObjects_j PlaceAllGameObjects_c1
+					DO GetArray l PlaceAllGameObjects_k PlaceAllGameObjects_c2
+					EQ PlaceAllGameObjects_c1 PlaceAllGameObjects_c2 PlaceAllGameObjects_cmp2
+					WHILE PlaceAllGameObjects_cmp2
+						OUT 1 PlaceAllGameObjects_msgTryAgain
+						STORE 1 PlaceAllGameObjects_tryPlaceObjecsAgain
+						
+						; force exit all loop
+						STORE 0 PlaceAllGameObjects_j
+						STORE 0 PlaceAllGameObjects_k
+						STORE 0 PlaceAllGameObjects_cmp2
+					ENDWHILE
+					STORE 0 PlaceAllGameObjects_cmp1
+				ENDWHILE
+			ENDWHILE
+		ENDWHILE
+		
+	ENDWHILE
+	
+	OUT 1 LN
+ENDPROC
+STORE "creating new level ..." PlaceAllGameObjects_msgGeneratingLevel
+STORE "." PlaceAllGameObjects_msgTryAgain
+
+PROC ShowLocationAndHazardWarning
+	DATA ShowLocationAndHazardWarning_msgWumpus[18]
+	DATA ShowLocationAndHazardWarning_msgPit[15]
+	DATA ShowLocationAndHazardWarning_msgBat[13]
+	DATA ShowLocationAndHazardWarning_msgCurrentRoom[15]
+	DATA ShowLocationAndHazardWarning_msgTunnelsLeadTo[15]
+	DATA ShowLocationAndHazardWarning_j
+	DATA ShowLocationAndHazardWarning_jFinished
+	DATA ShowLocationAndHazardWarning_k
+	DATA ShowLocationAndHazardWarning_neighborCave
+	DATA ShowLocationAndHazardWarning_otherObjectCave
+	DATA ShowLocationAndHazardWarning_eq
+
+	OUT 1 LN
+	
+	STORE 6 ShowLocationAndHazardWarning_j
+	WHILE ShowLocationAndHazardWarning_j
+		SUB ShowLocationAndHazardWarning_j 1 ShowLocationAndHazardWarning_j
+		
+		STORE 3 ShowLocationAndHazardWarning_k
+		WHILE ShowLocationAndHazardWarning_k
+			SUB ShowLocationAndHazardWarning_k 1 ShowLocationAndHazardWarning_k
+			
+			DO GetNeighborCave l[0] ShowLocationAndHazardWarning_k ShowLocationAndHazardWarning_neighborCave
+			DO GetArray l ShowLocationAndHazardWarning_j ShowLocationAndHazardWarning_otherObjectCave
+			
+			; debug
+			;DO PrintUByteNumber ShowLocationAndHazardWarning_j
+			;DO PrintUByteNumber ShowLocationAndHazardWarning_k
+			;DO PrintUByteNumber ShowLocationAndHazardWarning_neighborCave
+			;DO PrintUByteNumber ShowLocationAndHazardWarning_otherObjectCave
+			;OUT 1 LN
+			
+			EQ ShowLocationAndHazardWarning_neighborCave ShowLocationAndHazardWarning_otherObjectCave ShowLocationAndHazardWarning_eq
+			WHILE ShowLocationAndHazardWarning_eq
+				EQ 1 ShowLocationAndHazardWarning_j ShowLocationAndHazardWarning_eq
+				WHILE ShowLocationAndHazardWarning_eq
+					OUT 18 ShowLocationAndHazardWarning_msgWumpus
+					STORE 0 ShowLocationAndHazardWarning_eq
+				ENDWHILE
+				
+				EQ 2 ShowLocationAndHazardWarning_j ShowLocationAndHazardWarning_eq
+				WHILE ShowLocationAndHazardWarning_eq
+					OUT 15 ShowLocationAndHazardWarning_msgPit
+					STORE 0 ShowLocationAndHazardWarning_eq
+				ENDWHILE
+
+				EQ 3 ShowLocationAndHazardWarning_j ShowLocationAndHazardWarning_eq
+				WHILE ShowLocationAndHazardWarning_eq
+					OUT 15 ShowLocationAndHazardWarning_msgPit
+					STORE 0 ShowLocationAndHazardWarning_eq
+				ENDWHILE
+
+				EQ 4 ShowLocationAndHazardWarning_j ShowLocationAndHazardWarning_eq
+				WHILE ShowLocationAndHazardWarning_eq
+					OUT 13 ShowLocationAndHazardWarning_msgBat
+					STORE 0 ShowLocationAndHazardWarning_eq
+				ENDWHILE
+
+				EQ 5 ShowLocationAndHazardWarning_j ShowLocationAndHazardWarning_eq
+				WHILE ShowLocationAndHazardWarning_eq
+					OUT 13 ShowLocationAndHazardWarning_msgBat
+					STORE 0 ShowLocationAndHazardWarning_eq
+				ENDWHILE
+				
+				STORE 0 ShowLocationAndHazardWarning_eq
+			ENDWHILE
+		ENDWHILE
+		
+		; finish this loop when (ShowLocationAndHazardWarning_j == 1)
+		EQ ShowLocationAndHazardWarning_j 1 ShowLocationAndHazardWarning_jFinished
+		WHILE ShowLocationAndHazardWarning_jFinished
+			STORE 0 ShowLocationAndHazardWarning_j
+			STORE 0 ShowLocationAndHazardWarning_jFinished
+		ENDWHILE
+	ENDWHILE	
+	
+	; show player's current room
+	OUT 15 ShowLocationAndHazardWarning_msgCurrentRoom
+	DO PrintUByteNumber l[0]
+	OUT 1 LN
+
+	; show neighbor rooms
+	OUT 15 ShowLocationAndHazardWarning_msgTunnelsLeadTo
+	DO GetNeighborCave l[0] 0 ShowLocationAndHazardWarning_neighborCave
+	DO PrintUByteNumber ShowLocationAndHazardWarning_neighborCave
+	DO GetNeighborCave l[0] 1 ShowLocationAndHazardWarning_neighborCave
+	DO PrintUByteNumber ShowLocationAndHazardWarning_neighborCave
+	DO GetNeighborCave l[0] 2 ShowLocationAndHazardWarning_neighborCave
+	DO PrintUByteNumber ShowLocationAndHazardWarning_neighborCave
+	OUT 1 LN
+ENDPROC
+STORE "I SMELL A WUMPUS!\010" ShowLocationAndHazardWarning_msgWumpus
+STORE "I FEEL A DRAFT\010" ShowLocationAndHazardWarning_msgPit
+STORE "BATS NEARBY!\010" ShowLocationAndHazardWarning_msgBat
+STORE "YOU ARE IN ROOM" ShowLocationAndHazardWarning_msgCurrentRoom
+STORE "TUNNELS LEAD TO" ShowLocationAndHazardWarning_msgTunnelsLeadTo
+
+; selectedOption = 0 -> invalid option
+;                  1 -> shoot
+;                  2 -> move
+PROC ChooseOption selectedOption
+	DATA ChooseOption_msgAskOption[52]
+	DATA ChooseOption_option
+	DATA ChooseOption_eq
+	
+	STORE 0 selectedOption
+	OUT 52 ChooseOption_msgAskOption
+	IN 1 ChooseOption_option
+
+	; if 's', convert to upper case
+	EQ 115 ChooseOption_option ChooseOption_eq
+	WHILE ChooseOption_eq
+		STORE "S" ChooseOption_option
+		STORE 0 ChooseOption_eq
+	ENDWHILE
+	
+	; if 'S'
+	EQ 83 ChooseOption_option ChooseOption_eq
+	WHILE ChooseOption_eq
+		STORE 1 selectedOption
+		STORE 0 ChooseOption_eq
+	ENDWHILE
+
+	; if 'm', convert to upper case
+	EQ 109 ChooseOption_option ChooseOption_eq
+	WHILE ChooseOption_eq
+		STORE "M" ChooseOption_option
+		STORE 0 ChooseOption_eq
+	ENDWHILE
+
+	; if 'M'
+	EQ 77 ChooseOption_option ChooseOption_eq
+	WHILE ChooseOption_eq
+		STORE 2 selectedOption
+		STORE 0 ChooseOption_eq
+	ENDWHILE
+ENDPROC
+STORE "SHOOT OR MOVE (S-M)? (NOTE: USE 'Text input' FIELD)\010" ChooseOption_msgAskOption
+
+
+; result: 0 - game over
+;         1 - keep playing
+;         2 - you win
+PROC Move result
+	DATA Move_msgAskWhere[41]
+	DATA Move_msgNotPossible[13]
+	DATA Move_r
+	DATA Move_nextRoom
+	DATA Move_nextRoomInvalid
+	DATA Move_validRoom
+	DATA Move_nextRoomOk
+	DATA Move_checkHazards
+	DATA Move_checkHazardsAgain
+	
+	STORE 1 Move_nextRoomInvalid
+	WHILE Move_nextRoomInvalid
+		OUT 41 Move_msgAskWhere
+		IN 1 Move_nextRoom
+		
+		; keep asking until player provides a valid next room
+		STORE 3 Move_r
+		WHILE Move_r
+			SUB Move_r 1 Move_r
+			
+			DO GetNeighborCave l[0] Move_r Move_validRoom
+			EQ Move_nextRoom Move_validRoom Move_nextRoomOk
+			WHILE Move_nextRoomOk
+				STORE 0 Move_nextRoomInvalid
+				STORE 0 Move_nextRoomOk
+				STORE 0 Move_r
+			ENDWHILE
+		ENDWHILE
+		
+		COPYVV Move_nextRoomInvalid Move_nextRoomOk
+		WHILE Move_nextRoomOk
+			OUT 13 Move_msgNotPossible
+			STORE 0 Move_nextRoomOk
+		ENDWHILE
+	ENDWHILE
+	
+	COPYVV Move_nextRoom l[0]
+
+	; check hazards in this new room
+	STORE 1 Move_checkHazards
+	STORE 1 Move_checkHazardsAgain
+	WHILE Move_checkHazardsAgain
+		STORE 0 Move_checkHazardsAgain
+		
+		DO CheckWumpus result
+		EQ 1 result Move_checkHazards
+		WHILE Move_checkHazards
+			DO CheckPits result
+			
+			EQ 1 result Move_checkHazards
+			WHILE Move_checkHazards
+				DO CheckBats Move_checkHazardsAgain
+				
+				STORE 0 Move_checkHazards
+			ENDWHILE
+			
+			STORE 0 Move_checkHazards
+		ENDWHILE
+	ENDWHILE
+	
+ENDPROC
+STORE "WHERE TO? (NOTE: USE 'Byte input' FIELD)\010" Move_msgAskWhere
+STORE "NOT POSSIBLE\010" Move_msgNotPossible
+
+PROC MoveWumpus result
+	DATA MoveWumpus_msgWumpusGotYou[29]
+	DATA MoveWumpus_k
+	DATA MoveWumpus_comp
+	DATA MoveWumpus_randomRoom
+	
+	DO Fnc MoveWumpus_k
+	LT MoveWumpus_k 3 MoveWumpus_comp
+	WHILE MoveWumpus_comp
+		DO GetNeighborCave l[1] MoveWumpus_k MoveWumpus_randomRoom
+		COPYVV MoveWumpus_randomRoom l[1]
+
+		STORE 0 MoveWumpus_comp
+	ENDWHILE
+
+	EQ l[0] l[1] MoveWumpus_comp
+	WHILE MoveWumpus_comp
+		OUT 29 MoveWumpus_msgWumpusGotYou
+		STORE 0 result
+		
+		STORE 0 MoveWumpus_comp
+	ENDWHILE
+ENDPROC
+STORE "TSK TSK TSK- WUMPUS GOT YOU!\010" MoveWumpus_msgWumpusGotYou 
+
+PROC CheckWumpus result
+	DATA CheckWumpus_msgBumpedWumpus[26]
+	DATA CheckWumpus_eq
+	EQ l[0] l[1] CheckWumpus_eq
+	WHILE CheckWumpus_eq
+		OUT 26 CheckWumpus_msgBumpedWumpus
+		DO MoveWumpus result
+		
+		STORE 0 CheckWumpus_eq
+	ENDWHILE
+ENDPROC
+STORE "...OOPS! BUMPED A WUMPUS!\010" CheckWumpus_msgBumpedWumpus
+
+PROC CheckPits result
+	DATA CheckPits_msgFellPit[30]
+	DATA CheckPits_eq1
+	DATA CheckPits_eq2
+	DATA CheckPits_or
+	
+	EQ l[0] l[2] CheckPits_eq1
+	EQ l[0] l[3] CheckPits_eq2
+	OR CheckPits_eq1 CheckPits_eq2 CheckPits_or
+	
+	WHILE CheckPits_or
+		OUT 30 CheckPits_msgFellPit
+		STORE 0 result
+	
+		STORE 0 CheckPits_or
+	ENDWHILE
+ENDPROC
+STORE "YYYIIIIEEEE . . . FELL IN PIT\010" CheckPits_msgFellPit
+
+PROC CheckBats checkHazardsAgain
+	DATA CheckBats_msgZap[47]
+	DATA CheckBats_eq1
+	DATA CheckBats_eq2
+	DATA CheckBats_or
+	DATA CheckBats_randomRoom
+	
+	STORE 0 checkHazardsAgain
+	
+	EQ l[0] l[4] CheckBats_eq1
+	EQ l[0] l[5] CheckBats_eq2
+	OR CheckBats_eq1 CheckBats_eq2 CheckBats_or
+	
+	WHILE CheckBats_or
+		OUT 47 CheckBats_msgZap
+		DO Fna CheckBats_randomRoom
+		
+		; avoid infinite loop ? 
+		ADDRESS _ _ _ _ _
+		
+		COPYVV CheckBats_randomRoom l[0]
+		STORE 1 checkHazardsAgain
+		
+		STORE 0 CheckBats_or
+	ENDWHILE
+ENDPROC	
+STORE "ZAP--SUPER BAT SNATCH! ELSEWHEREVILLE FOR YOU!\010" CheckBats_msgZap
+
+PROC ShootArrow result
+	DATA ShootArrow_msgAskNoRooms[51]
+	DATA ShootArrow_msgRoom[40]
+	DATA ShootArrow_msgTryAnotherRoom[46]
+	DATA ShootArrow_msgMissed[7]
+	DATA ShootArrow_msgArrowsLeft[13]
+	DATA ShootArrow_msgNoMoreArrowsLeft[30]
+	DATA ShootArrow_noRooms
+	DATA ShootArrow_noRoomsCopy
+	DATA ShootArrow_cmp1
+	DATA ShootArrow_cmp2
+	DATA ShootArrow_cmp3
+	DATA ShootArrow_roomIndex
+	DATA ShootArrow_roomIndex2
+	DATA ShootArrow_room
+	DATA ShootArrow_p1
+	DATA ShootArrow_p2
+	DATA ShootArrow_k1
+	DATA ShootArrow_loc
+	DATA ShootArrow_neighbor
+	DATA ShootArrow_neighborNotFound
+	
+	STORE 1 ShootArrow_cmp3
+	WHILE ShootArrow_cmp3
+		OUT 51 ShootArrow_msgAskNoRooms
+		IN 1 ShootArrow_noRooms
+		
+		LT ShootArrow_noRooms 1 ShootArrow_cmp1
+		GT ShootArrow_noRooms 5 ShootArrow_cmp2
+		OR ShootArrow_cmp1 ShootArrow_cmp2 ShootArrow_cmp3
+	ENDWHILE
+	
+	COPYVV ShootArrow_noRooms ShootArrow_noRoomsCopy
+	
+	STORE 0 ShootArrow_roomIndex
+	WHILE ShootArrow_noRooms
+		SUB ShootArrow_noRooms 1 ShootArrow_noRooms
+
+		OUT 40 ShootArrow_msgRoom
+		IN 1 ShootArrow_room
+		DO SetArray p ShootArrow_roomIndex ShootArrow_room
+		
+		GT ShootArrow_roomIndex 1 ShootArrow_cmp1
+
+		SUB ShootArrow_roomIndex 2 ShootArrow_roomIndex2
+		DO GetArray p ShootArrow_roomIndex ShootArrow_p1
+		DO GetArray p ShootArrow_roomIndex2 ShootArrow_p2
+		EQ ShootArrow_p1 ShootArrow_p2 ShootArrow_cmp2
+		
+		AND ShootArrow_cmp1 ShootArrow_cmp2 ShootArrow_cmp3
+		WHILE ShootArrow_cmp3
+			OUT 46 ShootArrow_msgTryAnotherRoom
+			ADD ShootArrow_noRooms 1 ShootArrow_noRooms
+			SUB ShootArrow_roomIndex 1 ShootArrow_roomIndex
+			
+			STORE 0 ShootArrow_cmp3
+		ENDWHILE
+		
+		ADD ShootArrow_roomIndex 1 ShootArrow_roomIndex
+	ENDWHILE
+
+	; debug
+	;OUT 1 LN
+	;DO PrintUByteNumber p[0]
+	;DO PrintUByteNumber p[1]
+	;DO PrintUByteNumber p[2]
+	;DO PrintUByteNumber p[3]
+	;DO PrintUByteNumber p[4]
+	;OUT 1 LN
+
+	COPYVV ShootArrow_noRoomsCopy ShootArrow_noRooms
+	
+	; arrow start location is the same as player
+	COPYVV l[0] ShootArrow_loc
+	
+	; check arrows hit
+	STORE 0 ShootArrow_roomIndex
+	WHILE ShootArrow_noRooms
+		SUB ShootArrow_noRooms 1 ShootArrow_noRooms
+
+		DO GetArray p ShootArrow_roomIndex ShootArrow_room
+		
+		STORE 1 ShootArrow_neighborNotFound
+		
+		STORE 3 ShootArrow_k1
+		WHILE ShootArrow_k1
+			SUB ShootArrow_k1 1 ShootArrow_k1
+			
+			DO GetNeighborCave ShootArrow_loc ShootArrow_k1 ShootArrow_neighbor
+			
+			EQ ShootArrow_neighbor ShootArrow_room ShootArrow_cmp1
+			WHILE ShootArrow_cmp1
+				STORE 0 ShootArrow_neighborNotFound
+				
+				COPYVV ShootArrow_room ShootArrow_loc
+				DO CheckArrow ShootArrow_loc result
+				
+				; if result is win or lose, force exit
+				NEQ result 1 ShootArrow_cmp2
+				WHILE ShootArrow_cmp2
+					STORE 0 ShootArrow_k1
+					STORE 0 ShootArrow_noRooms
+					
+					STORE 0 ShootArrow_cmp2
+				ENDWHILE
+				
+				STORE 0 ShootArrow_cmp1
+			ENDWHILE
+		
+		ENDWHILE 
+
+		; no neightbor room found, choose random room
+		WHILE ShootArrow_neighborNotFound
+			DO Fnb ShootArrow_roomIndex2
+			
+			; workaround, not sure why but including the line below prevents the program to enter in an infinite loop (?)
+			ADDRESS _ _ _ _ _
+			
+			DO GetNeighborCave ShootArrow_loc ShootArrow_roomIndex2 ShootArrow_loc
+			DO CheckArrow ShootArrow_loc result
+
+			; if result is win or lose, force exit
+			NEQ result 1 ShootArrow_cmp3
+			WHILE ShootArrow_cmp3
+				STORE 0 ShootArrow_noRooms
+				
+				STORE 0 ShootArrow_cmp3
+			ENDWHILE
+			
+			STORE 0 ShootArrow_neighborNotFound
+		ENDWHILE
+		
+		ADD ShootArrow_roomIndex 1 ShootArrow_roomIndex
+	ENDWHILE
+
+	; check result
+	EQ result 1 ShootArrow_cmp3
+	WHILE ShootArrow_cmp3
+		OUT 7 ShootArrow_msgMissed
+		
+		; dec arrows count
+		SUB a 1 a
+
+		EQ a 0 ShootArrow_cmp3
+		WHILE ShootArrow_cmp3
+			OUT 30 ShootArrow_msgNoMoreArrowsLeft
+			STORE 0 result
+			
+			STORE 0 ShootArrow_cmp3
+		ENDWHILE
+
+		NEQ a 0 ShootArrow_cmp3
+		WHILE ShootArrow_cmp3
+			DO PrintUByteNumber a
+			OUT 13 ShootArrow_msgArrowsLeft
+
+			STORE 0 ShootArrow_cmp3
+		ENDWHILE
+
+		DO MoveWumpus result
+
+		; if lose, force exit
+		NEQ result 1 ShootArrow_cmp1
+		WHILE ShootArrow_cmp1
+			STORE 0 ShootArrow_k1
+			STORE 0 ShootArrow_noRooms
+			
+			STORE 0 ShootArrow_cmp1
+		ENDWHILE
+		
+		STORE 0 ShootArrow_cmp3
+	ENDWHILE
+		
+ENDPROC
+STORE "NO. OF ROOMS(1-5) ? (NOTE: USE 'Byte input' FIELD)\010" ShootArrow_msgAskNoRooms
+STORE "ROOM # ? (NOTE: USE 'Byte input' FIELD)\010" ShootArrow_msgRoom
+STORE "ARROWS AREN'T THAT CROOKED - TRY ANOTHER ROOM\010" ShootArrow_msgTryAnotherRoom
+STORE "MISSED\010" ShootArrow_msgMissed
+STORE " ARROWS LEFT\010" ShootArrow_msgArrowsLeft
+STORE "THERE ARE NO MORE ARROWS LEFT\010" ShootArrow_msgNoMoreArrowsLeft
+
+PROC CheckArrow loc result
+	DATA CheckArrow_msgGotWumpus[25]
+	DATA CheckArrow_msgArrowGotYou[21]
+	DATA CheckArrow_eq
+	
+	EQ loc l[1] CheckArrow_eq
+	WHILE CheckArrow_eq
+		OUT 25 CheckArrow_msgGotWumpus
+		STORE 2 result
+
+		STORE 0 CheckArrow_eq
+	ENDWHILE
+
+	EQ loc l[0] CheckArrow_eq
+	WHILE CheckArrow_eq
+		OUT 21 CheckArrow_msgArrowGotYou
+		STORE 0 result
+
+		STORE 0 CheckArrow_eq
+	ENDWHILE
+ENDPROC
+STORE "AHA! YOU GOT THE WUMPUS!\010" CheckArrow_msgGotWumpus
+STORE "OUCH! ARROW GOT YOU!\010" CheckArrow_msgArrowGotYou
+
+PROC StartGame
+	DATA StartGame_msgWin[47] 
+	DATA StartGame_msgLose[21]
+	DATA StartGame_gameState 
+	DATA StartGame_gameLoop 
+	DATA StartGame_playerOptionEq 
+	DATA StartGame_playerOption
+
+	; start the game with 5 arrows
+	STORE 5 a
+
+	; create the level
+	DO PlaceAllGameObjects 
+
+	STORE 1 StartGame_gameState
+	STORE 1 StartGame_gameLoop
+	WHILE StartGame_gameLoop
+	
+		; debug show all game objects location
+		;OUT 1 LN
+		;DO PrintUByteNumber l[0]
+		;DO PrintUByteNumber l[1]
+		;DO PrintUByteNumber l[2]
+		;DO PrintUByteNumber l[3]
+		;DO PrintUByteNumber l[4]
+		;DO PrintUByteNumber l[5]
+		;OUT 1 LN
+
+		DO ShowLocationAndHazardWarning
+
+		DO ChooseOption StartGame_playerOption
+
+		;DO PrintUByteNumber StartGame_playerOption
+		
+		; invalid option selected?
+		EQ StartGame_playerOption 0 StartGame_playerOptionEq
+		WHILE StartGame_playerOptionEq
+			OUT 1 LN
+			STORE 0 StartGame_playerOptionEq
+		ENDWHILE
+
+		; shoot option selected?
+		EQ StartGame_playerOption 1 StartGame_playerOptionEq
+		WHILE StartGame_playerOptionEq
+			DO ShootArrow StartGame_gameState
+			
+			STORE 0 StartGame_playerOptionEq
+		ENDWHILE
+
+		; move option selected?
+		EQ StartGame_playerOption 2 StartGame_playerOptionEq
+		WHILE StartGame_playerOptionEq
+			DO Move StartGame_gameState
+			
+			STORE 0 StartGame_playerOptionEq
+		ENDWHILE
+
+		; check win
+		EQ 2 StartGame_gameState StartGame_playerOptionEq
+		WHILE StartGame_playerOptionEq
+			OUT 47 StartGame_msgWin
+			STORE 0 StartGame_gameLoop
+			
+			STORE 0 StartGame_playerOptionEq
+		ENDWHILE
+
+		; check dead
+		EQ 0 StartGame_gameState StartGame_playerOptionEq
+		WHILE StartGame_playerOptionEq
+			OUT 21 StartGame_msgLose
+			STORE 0 StartGame_gameLoop
+			
+			STORE 0 StartGame_playerOptionEq
+		ENDWHILE
+		
+	ENDWHILE
+	
+ENDPROC
+STORE "HEE HEE HEE - THE WUMPUS'LL GETCHA NEXT TIME!!\010" StartGame_msgWin
+STORE "HA HA HA - YOU LOSE!\010" StartGame_msgLose
+
+
+; --- start game ---
+
+DATA gameTitle[17]
+STORE "HUNT THE WUMPUS\010\010" gameTitle
+OUT 17 gameTitle
+
+DO AskRandomSeed
+
+DATA msgNewGame[44] loop
+STORE "\010ENTER ANY CHARACTER TO START NEW GAME ...\010\010" msgNewGame
+STORE 1 loop
+
+WHILE loop
+	DO StartGame
+	
+	OUT 44 msgNewGame
+	IN 1 _
+ENDWHILE
