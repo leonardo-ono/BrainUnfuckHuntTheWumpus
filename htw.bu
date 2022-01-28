@@ -30,7 +30,7 @@ PROC GetArray array index value
 	
 	ADDRESS array _ _ _ GetArray_ndw
 	ADD GetArray_ndw index GetArray_ndw
-	COPYMV _ _ _ GetArray_ndw value
+	COPYMV 0 0 0 GetArray_ndw value
 ENDPROC
 
 ; set value to array
@@ -40,7 +40,7 @@ PROC SetArray array index value
 	
 	ADDRESS array _ _ _ SetArray_ndw
 	ADD SetArray_ndw index SetArray_ndw
-	COPYVM value _ _ _ SetArray_ndw
+	COPYVM value 0 0 0 SetArray_ndw
 ENDPROC
 
 ; game objects array
@@ -75,13 +75,13 @@ PROC GetNeighborCave caveIndex neighborIndex value
 	DATA GetNeighborCave_ndw
 	DATA GetNeighborCave_sIndex
 	
+	ADDRESS s _ _ _ GetNeighborCave_ndw
 	COPYVV caveIndex GetNeighborCave_sIndex
 	MUL caveIndex 3 GetNeighborCave_sIndex
 	ADD GetNeighborCave_sIndex GetNeighborCave_ndw GetNeighborCave_sIndex
 	ADD GetNeighborCave_sIndex neighborIndex GetNeighborCave_sIndex
-	COPYMV _ _ _ GetNeighborCave_sIndex value
+	COPYMV 0 0 0 GetNeighborCave_sIndex value
 ENDPROC
-ADDRESS s _ _ _ GetNeighborCave_ndw
 
 ; print variable as unsigned byte string number
 ; notes: - number argument must be a variable. literal numbers will not work.
@@ -100,7 +100,7 @@ PROC PrintUByteNumber number
 	WHILE PrintUByteNumber_nq
 		DIV PrintUByteNumber_nq 10 PrintUByteNumber_nq PrintUByteNumber_nr
 		ADD PrintUByteNumber_nr 48 PrintUByteNumber_nr
-		COPYVM PrintUByteNumber_nr _ _ _ PrintUByteNumber_ndw
+		COPYVM PrintUByteNumber_nr 0 0 0 PrintUByteNumber_ndw
 		SUB PrintUByteNumber_ndw 1 PrintUByteNumber_ndw
 	ENDWHILE
 	OUT 3 PrintUByteNumber_nd
@@ -500,10 +500,6 @@ PROC CheckBats checkHazardsAgain
 	WHILE CheckBats_or
 		OUT 47 CheckBats_msgZap
 		DO Fna CheckBats_randomRoom
-		
-		; avoid infinite loop ? 
-		ADDRESS _ _ _ _ _
-		
 		COPYVV CheckBats_randomRoom l[0]
 		STORE 1 checkHazardsAgain
 		
@@ -524,6 +520,10 @@ PROC ShootArrow result
 	DATA ShootArrow_cmp1
 	DATA ShootArrow_cmp2
 	DATA ShootArrow_cmp3
+	DATA ShootArrow_cmp4
+	DATA ShootArrow_cmp5
+	DATA ShootArrow_cmp6
+	DATA ShootArrow_cmp7
 	DATA ShootArrow_roomIndex
 	DATA ShootArrow_roomIndex2
 	DATA ShootArrow_room
@@ -626,10 +626,6 @@ PROC ShootArrow result
 		; no neightbor room found, choose random room
 		WHILE ShootArrow_neighborNotFound
 			DO Fnb ShootArrow_roomIndex2
-			
-			; workaround, not sure why but including the line below prevents the program to enter in an infinite loop (?)
-			ADDRESS _ _ _ _ _
-			
 			DO GetNeighborCave ShootArrow_loc ShootArrow_roomIndex2 ShootArrow_loc
 			DO CheckArrow ShootArrow_loc result
 
@@ -648,41 +644,41 @@ PROC ShootArrow result
 	ENDWHILE
 
 	; check result
-	EQ result 1 ShootArrow_cmp3
-	WHILE ShootArrow_cmp3
+	EQ result 1 ShootArrow_cmp4
+	WHILE ShootArrow_cmp4
 		OUT 7 ShootArrow_msgMissed
 		
 		; dec arrows count
 		SUB a 1 a
 
-		EQ a 0 ShootArrow_cmp3
-		WHILE ShootArrow_cmp3
+		EQ a 0 ShootArrow_cmp5
+		WHILE ShootArrow_cmp5
 			OUT 30 ShootArrow_msgNoMoreArrowsLeft
 			STORE 0 result
 			
-			STORE 0 ShootArrow_cmp3
+			STORE 0 ShootArrow_cmp5
 		ENDWHILE
 
-		NEQ a 0 ShootArrow_cmp3
-		WHILE ShootArrow_cmp3
+		NEQ a 0 ShootArrow_cmp6
+		WHILE ShootArrow_cmp6
 			DO PrintUByteNumber a
 			OUT 13 ShootArrow_msgArrowsLeft
 
-			STORE 0 ShootArrow_cmp3
+			STORE 0 ShootArrow_cmp6
 		ENDWHILE
 
 		DO MoveWumpus result
 
 		; if lose, force exit
-		NEQ result 1 ShootArrow_cmp1
-		WHILE ShootArrow_cmp1
+		NEQ result 1 ShootArrow_cmp7
+		WHILE ShootArrow_cmp7
 			STORE 0 ShootArrow_k1
 			STORE 0 ShootArrow_noRooms
 			
-			STORE 0 ShootArrow_cmp1
+			STORE 0 ShootArrow_cmp7
 		ENDWHILE
 		
-		STORE 0 ShootArrow_cmp3
+		STORE 0 ShootArrow_cmp4
 	ENDWHILE
 		
 ENDPROC
