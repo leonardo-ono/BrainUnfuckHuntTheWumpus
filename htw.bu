@@ -667,7 +667,13 @@ PROC ShootArrow result
 			STORE 0 ShootArrow_cmp6
 		ENDWHILE
 
-		DO MoveWumpus result
+		; if still alive, move wumpus
+		EQ result 1 ShootArrow_cmp7
+		WHILE ShootArrow_cmp7
+			DO MoveWumpus result
+
+			STORE 0 ShootArrow_cmp7
+		ENDWHILE
 
 		; if lose, force exit
 		NEQ result 1 ShootArrow_cmp7
